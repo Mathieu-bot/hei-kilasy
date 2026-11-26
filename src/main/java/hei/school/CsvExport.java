@@ -1,6 +1,8 @@
 package hei.school;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +36,13 @@ public class CsvExport {
             if (row.get("raw_points") != null) {
                 double n = ((BigDecimal) row.get("raw_points")).doubleValue()
                         / ((BigDecimal) row.get("max_points")).doubleValue() * 20;
+                if (Boolean.TRUE.equals(row.get("late"))) {
+                    // -10% per day of delay started, capped at -50%
+                    LocalDate deadline = ((java.sql.Date) row.get("deadline")).toLocalDate();
+                    LocalDate submittedDate = ((java.sql.Timestamp) row.get("submitted_at")).toLocalDateTime().toLocalDate();
+                    long daysLate = ChronoUnit.DAYS.between(deadline, submittedDate);
+                    n = n * (1 - Math.min(0.5, daysLate * 0.10));
+                }
                 n = Math.floor(n * 10) / 10;
                 note = String.valueOf(n).replace('.', ',');
             }
