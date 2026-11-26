@@ -6,6 +6,7 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,7 +64,12 @@ public class GradeReport {
                 } else {
                     BigDecimal raw = (BigDecimal) row.get("raw_points");
                     BigDecimal max = (BigDecimal) row.get("max_points");
-                    BigDecimal grade = raw.multiply(new BigDecimal("20")).divide(max, 1, RoundingMode.HALF_UP);
+                    BigDecimal rawGrade = raw.multiply(new BigDecimal("20")).divide(max, 4, RoundingMode.HALF_UP);
+                    // -10% per day of delay started, capped at -50%
+                    long daysLate = ChronoUnit.DAYS.between(deadline, submittedAt.toLocalDate());
+                    BigDecimal penalty = daysLate <= 0 ? BigDecimal.ZERO
+                            : BigDecimal.valueOf(Math.min(0.5, daysLate * 0.10));
+                    BigDecimal grade = rawGrade.multiply(BigDecimal.ONE.subtract(penalty)).setScale(1, RoundingMode.HALF_UP);
                     line.put("status", "CORRIGÉ");
                     line.put("grade", grade);
                     line.put("feedback", row.get("feedback"));
