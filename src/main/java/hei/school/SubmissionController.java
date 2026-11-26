@@ -66,9 +66,28 @@ public class SubmissionController {
             return ResponseEntity.status(409).body(Map.of("error", "Cet étudiant a déjà soumis cet exercice"));
         }
 
-        LocalDate deadline = ((java.sql.Date) exercises.get(0).get("deadline")).toLocalDate();
+        java.sql.Date deadlineDate = (java.sql.Date) exercises.get(0).get("deadline");
+        LocalDate deadline = deadlineDate == null ? null : deadlineDate.toLocalDate();
         LocalDateTime now = LocalDateTime.now();
-        boolean late = now.toLocalDate().isAfter(deadline);
+        boolean late = deadline != null && now.toLocalDate().isAfter(deadline);
+
+        Integer duration = (Integer) exercises.get(0).get("duration_minutes");
+        if (duration != null) {
+            List<Timestamp> starts = jdbcTemplate.queryForList(
+                    "SELECT started_at FROM exercise_start WHERE exercise_id = ? AND student_id = ?",
+                    Timestamp.class, id, studentId);
+            if (starts.isEmpty()) {
+                return ResponseEntity.status(422).body(Map.of("error",
+                        "Exercice chronométré : il faut le démarrer avant de rendre (POST /exercises/" + id + "/start)"));
+            }
+            LocalDateTime endsAt = starts.get(0).toLocalDateTime().plusMinutes(duration);
+            if (now.isAfter(endsAt)) {
+                long over = ChronoUnit.SECONDS.between(endsAt, now);
+                return ResponseEntity.status(422).body(Map.of("error",
+                        "Temps écoulé : la durée de " + duration + " minutes est dépassée de "
+                                + over / 60 + " min " + over % 60 + " s"));
+            }
+        }
 
         jdbcTemplate.update(
                 "INSERT INTO submission (exercise_id, student_id, content, repo_url, submitted_at) VALUES (?, ?, ?, ?, ?)",
@@ -92,7 +111,7 @@ public class SubmissionController {
             return ResponseEntity.status(404).body(Map.of("error", "Soumission introuvable"));
         }
         Map<String, Object> row = rows.get(0);
-        LocalDate deadline = ((java.sql.Date) row.get("deadline")).toLocalDate();
+        LocalDate deadline = row.get("deadline") == null ? null : ((java.sql.Date) row.get("deadline")).toLocalDate();
         LocalDateTime submittedAt = ((Timestamp) row.get("submitted_at")).toLocalDateTime();
 
         Map<String, Object> result = new HashMap<>();
@@ -102,7 +121,7 @@ public class SubmissionController {
         result.put("content", row.get("content"));
         result.put("repoUrl", row.get("repo_url"));
         result.put("submittedAt", submittedAt);
-        result.put("late", submittedAt.toLocalDate().isAfter(deadline));
+        result.put("late", deadline != null && submittedAt.toLocalDate().isAfter(deadline));
         if (row.get("raw_points") != null) {
             double raw = ((BigDecimal) row.get("raw_points")).doubleValue();
             double max = ((BigDecimal) row.get("max_points")).doubleValue();
@@ -138,9 +157,9 @@ public class SubmissionController {
         jdbcTemplate.update("UPDATE submission SET raw_points = ?, feedback = ?, graded_at = now() WHERE id = ?",
                 points, feedback, id);
 
-        LocalDate deadline = ((java.sql.Date) row.get("deadline")).toLocalDate();
+        LocalDate deadline = row.get("deadline") == null ? null : ((java.sql.Date) row.get("deadline")).toLocalDate();
         LocalDateTime submittedAt = ((Timestamp) row.get("submitted_at")).toLocalDateTime();
-        boolean late = submittedAt.toLocalDate().isAfter(deadline);
+        boolean late = deadline != null && submittedAt.toLocalDate().isAfter(deadline);
 
         // grade out of 20, penalized for late submissions
         double grade = gradeWithLatePenalty(points, max, deadline, submittedAt.toLocalDate());
@@ -189,6 +208,9 @@ public class SubmissionController {
     // -10% per day of delay started, capped at -50%
     private static double gradeWithLatePenalty(double points, double max, LocalDate deadline, LocalDate submittedDate) {
         double grade = points / max * 20;
+        if (deadline == null) {
+            return Math.round(grade * 10) / 10.0; // duration only: no late penalty
+        }
         long daysLate = ChronoUnit.DAYS.between(deadline, submittedDate);
         if (daysLate <= 0) {
             return Math.round(grade * 10) / 10.0;
