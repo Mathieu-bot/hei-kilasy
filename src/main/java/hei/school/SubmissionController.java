@@ -24,11 +24,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class SubmissionController {
 
+    public interface SmsSender {
+        void send(String phone, String message);
+    }
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private JavaMailSender mailSender;
+
+    @Autowired
+    private SmsSender smsSender;
 
     @PostMapping("/exercises/{id}/submissions")
     public ResponseEntity<?> submit(@PathVariable long id, @RequestBody Map<String, Object> body) {
@@ -155,6 +162,19 @@ public class SubmissionController {
         message.setText(text);
         mailSender.send(message);
         System.out.println("Email de note envoyé à " + row.get("email"));
+
+        // SMS is best effort: the grade is already saved, a failure must not break the response
+        String phone = (String) row.get("phone");
+        if (phone == null || phone.isBlank()) {
+            System.out.println("[SMS] ignoré : pas de téléphone pour " + row.get("email"));
+        } else {
+            try {
+                smsSender.send(phone, String.format(java.util.Locale.FRANCE,
+                        "Votre note pour « %s » est disponible : %.1f/20.", title, grade));
+            } catch (Exception e) {
+                System.err.println("[SMS] échec pour " + phone + " : " + e.getMessage());
+            }
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("id", id);
