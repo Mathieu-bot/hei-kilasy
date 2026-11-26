@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -99,7 +100,7 @@ public class SubmissionController {
             double raw = ((BigDecimal) row.get("raw_points")).doubleValue();
             double max = ((BigDecimal) row.get("max_points")).doubleValue();
             result.put("rawPoints", raw);
-            result.put("grade", Math.round(raw / max * 20 * 10) / 10.0);
+            result.put("grade", gradeWithLatePenalty(raw, max, deadline, submittedAt.toLocalDate()));
             result.put("feedback", row.get("feedback"));
         }
         return ResponseEntity.ok(result);
@@ -130,12 +131,12 @@ public class SubmissionController {
         jdbcTemplate.update("UPDATE submission SET raw_points = ?, feedback = ?, graded_at = now() WHERE id = ?",
                 points, feedback, id);
 
-        // grade out of 20
-        double grade = Math.round(points / max * 20 * 10) / 10.0;
-
         LocalDate deadline = ((java.sql.Date) row.get("deadline")).toLocalDate();
         LocalDateTime submittedAt = ((Timestamp) row.get("submitted_at")).toLocalDateTime();
         boolean late = submittedAt.toLocalDate().isAfter(deadline);
+
+        // grade out of 20, penalized for late submissions
+        double grade = gradeWithLatePenalty(points, max, deadline, submittedAt.toLocalDate());
 
         // notify the student by email
         String fullName = (String) row.get("full_name");
@@ -163,5 +164,16 @@ public class SubmissionController {
         result.put("late", late);
         result.put("feedback", feedback);
         return ResponseEntity.ok(result);
+    }
+
+    // -10% per day of delay started, capped at -50%
+    private static double gradeWithLatePenalty(double points, double max, LocalDate deadline, LocalDate submittedDate) {
+        double grade = points / max * 20;
+        long daysLate = ChronoUnit.DAYS.between(deadline, submittedDate);
+        if (daysLate <= 0) {
+            return Math.round(grade * 10) / 10.0;
+        }
+        double penalty = Math.min(0.5, daysLate * 0.10);
+        return Math.round(grade * (1 - penalty) * 10) / 10.0;
     }
 }
